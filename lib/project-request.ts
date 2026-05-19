@@ -1,5 +1,5 @@
 import { getHighlightForSession } from "@/lib/highlight-scope";
-import { getResumeFilePath, getResumeMeta } from "@/lib/resume-upload";
+import { ensureResumeFilePath, getResumeMeta } from "@/lib/resume-upload";
 import type { SkillClusterKind } from "@/lib/skill-clusters";
 import type { User } from "@/lib/user-store";
 
@@ -52,7 +52,7 @@ export async function resolveProjectRequest(
     clusterLabel,
     clusterKind: options?.clusterKind,
     neededFor: neededFor?.trim() || undefined,
-    resumePath: getResumeFilePath(user.id, resumeMeta),
+    resumePath: await ensureResumeFilePath(user.id, resumeMeta),
     jobDescription,
   };
 }

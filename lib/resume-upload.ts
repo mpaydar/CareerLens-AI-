@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { clearGapAnalysis } from "@/lib/gap-store";
+import { getRedis } from "@/lib/redis";
 
 export type ResumeMeta = {
   originalFileName: string;
@@ -10,9 +11,7 @@ export type ResumeMeta = {
   storedFileName: string;
 };
 
-const UPLOAD_ROOT = path.join(process.cwd(), ".resume-upload");
 const META_FILE = "meta.json";
-
 const MAX_BYTES = 10 * 1024 * 1024;
 
 const ALLOWED_EXT = new Set([".pdf", ".doc", ".docx"]);
@@ -24,8 +23,23 @@ const MIME_FOR_EXT: Record<string, string> = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
+function resumeMetaKey(userId: string): string {
+  return `resumesnap:resume-meta:${userId}`;
+}
+
+function resumeDataKey(userId: string): string {
+  return `resumesnap:resume-data:${userId}`;
+}
+
+function getLocalUploadRoot(): string {
+  if (process.env.VERCEL) {
+    return path.join("/tmp", "resumesnap-upload");
+  }
+  return path.join(process.cwd(), ".resume-upload");
+}
+
 function getUserUploadDir(userId: string): string {
-  return path.join(UPLOAD_ROOT, userId);
+  return path.join(getLocalUploadRoot(), userId);
 }
 
 function getMetaPath(userId: string): string {
@@ -37,7 +51,9 @@ function safeExtension(fileName: string): string | null {
   return ALLOWED_EXT.has(ext) ? ext : null;
 }
 
-export async function getResumeMeta(userId: string): Promise<ResumeMeta | null> {
+async function readResumeMetaFromDisk(
+  userId: string,
+): Promise<ResumeMeta | null> {
   try {
     const raw = await readFile(getMetaPath(userId), "utf8");
     const parsed = JSON.parse(raw) as Partial<ResumeMeta>;
@@ -56,6 +72,30 @@ export async function getResumeMeta(userId: string): Promise<ResumeMeta | null> 
   }
 }
 
+async function readResumeBufferFromDisk(
+  userId: string,
+  meta: ResumeMeta,
+): Promise<Buffer | null> {
+  try {
+    return await readFile(
+      path.join(getUserUploadDir(userId), meta.storedFileName),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export async function getResumeMeta(userId: string): Promise<ResumeMeta | null> {
+  const redis = getRedis();
+  if (redis) {
+    const stored = await redis.get<ResumeMeta>(resumeMetaKey(userId));
+    if (stored) {
+      return stored;
+    }
+  }
+  return readResumeMetaFromDisk(userId);
+}
+
 async function removeStoredFiles(userId: string): Promise<void> {
   const dir = getUserUploadDir(userId);
   try {
@@ -69,6 +109,51 @@ async function removeStoredFiles(userId: string): Promise<void> {
   } catch {
     // ignore missing dir
   }
+}
+
+async function clearResumeFromRedis(userId: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) {
+    return;
+  }
+  await redis.del(resumeMetaKey(userId), resumeDataKey(userId));
+}
+
+async function saveResumeToRedis(
+  userId: string,
+  meta: ResumeMeta,
+  buffer: Buffer,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) {
+    return;
+  }
+  await redis.set(resumeMetaKey(userId), meta);
+  await redis.set(resumeDataKey(userId), buffer.toString("base64"));
+}
+
+async function readResumeBufferFromRedis(userId: string): Promise<Buffer | null> {
+  const redis = getRedis();
+  if (!redis) {
+    return null;
+  }
+  const encoded = await redis.get<string>(resumeDataKey(userId));
+  if (!encoded || typeof encoded !== "string") {
+    return null;
+  }
+  return Buffer.from(encoded, "base64");
+}
+
+async function saveResumeToDisk(
+  userId: string,
+  meta: ResumeMeta,
+  buffer: Buffer,
+): Promise<void> {
+  const uploadDir = getUserUploadDir(userId);
+  await mkdir(uploadDir, { recursive: true });
+  await removeStoredFiles(userId);
+  await writeFile(path.join(uploadDir, meta.storedFileName), buffer);
+  await writeFile(getMetaPath(userId), JSON.stringify(meta, null, 0), "utf8");
 }
 
 export async function saveResumeFromUpload(
@@ -95,34 +180,62 @@ export async function saveResumeFromUpload(
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const uploadDir = getUserUploadDir(userId);
-
-  await mkdir(uploadDir, { recursive: true });
-  await removeStoredFiles(userId);
-
-  const storedFileName = `resume-${Date.now()}${ext}`;
-  const storedPath = path.join(uploadDir, storedFileName);
-  await writeFile(storedPath, buffer);
 
   const meta: ResumeMeta = {
     originalFileName: file.name,
     mimeType: MIME_FOR_EXT[ext],
     sizeBytes: buffer.length,
     uploadedAt: new Date().toISOString(),
-    storedFileName,
+    storedFileName: `resume-${Date.now()}${ext}`,
   };
 
-  await writeFile(getMetaPath(userId), JSON.stringify(meta, null, 0), "utf8");
+  await clearResumeFromRedis(userId);
+  await saveResumeToRedis(userId, meta, buffer);
+
+  if (!getRedis()) {
+    await saveResumeToDisk(userId, meta, buffer);
+  }
+
   await clearGapAnalysis(userId);
   return meta;
 }
 
+/** Local path for Python / file-based tools; materializes from Redis on serverless. */
+export async function ensureResumeFilePath(
+  userId: string,
+  meta: ResumeMeta,
+): Promise<string> {
+  const localPath = path.join(getUserUploadDir(userId), meta.storedFileName);
+
+  try {
+    await readFile(localPath);
+    return localPath;
+  } catch {
+    // materialize below
+  }
+
+  let buffer =
+    (await readResumeBufferFromRedis(userId)) ??
+    (await readResumeBufferFromDisk(userId, meta));
+
+  if (!buffer) {
+    throw new Error("resume file not found; upload your resume again");
+  }
+
+  const uploadDir = getUserUploadDir(userId);
+  await mkdir(uploadDir, { recursive: true });
+  await writeFile(localPath, buffer);
+  return localPath;
+}
+
+/** @deprecated Use ensureResumeFilePath — sync path is unreliable on Vercel */
 export function getResumeFilePath(userId: string, meta: ResumeMeta): string {
   return path.join(getUserUploadDir(userId), meta.storedFileName);
 }
 
 export async function deleteResume(userId: string): Promise<void> {
   const meta = await getResumeMeta(userId);
+  await clearResumeFromRedis(userId);
   try {
     if (meta) {
       await unlink(path.join(getUserUploadDir(userId), meta.storedFileName)).catch(

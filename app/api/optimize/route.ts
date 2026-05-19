@@ -6,7 +6,7 @@ import {
   type OptimizeMode,
 } from "@/lib/resume-optimizer";
 import {
-  getResumeFilePath,
+  ensureResumeFilePath,
   getResumeMeta,
 } from "@/lib/resume-upload";
 export async function POST(request: Request) {
@@ -44,8 +44,9 @@ export async function POST(request: Request) {
       );
     }
 
+    const resumePath = await ensureResumeFilePath(user.id, resumeMeta);
     const result = await optimizeResumeBullet(
-      getResumeFilePath(user.id, resumeMeta),
+      resumePath,
       jobDescription,
       skill,
       { mode, neededFor },

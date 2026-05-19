@@ -8,7 +8,7 @@ import {
 } from "@/lib/gap-store";
 import { runGapAnalysis } from "@/lib/skills-analyzer";
 import {
-  getResumeFilePath,
+  ensureResumeFilePath,
   getResumeMeta,
 } from "@/lib/resume-upload";
 
@@ -65,10 +65,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const analysis = await runGapAnalysis(
-      getResumeFilePath(user.id, resumeMeta),
-      jobDescription,
-    );
+    const resumePath = await ensureResumeFilePath(user.id, resumeMeta);
+    const analysis = await runGapAnalysis(resumePath, jobDescription);
 
     const stored = await saveGapAnalysis(user.id, analysis, {
       jobDescriptionPreview: jobDescription.slice(0, 280),

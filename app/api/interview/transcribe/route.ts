@@ -3,7 +3,9 @@ import path from "path";
 import { NextResponse } from "next/server";
 import { transcribeAudioFile } from "@/lib/interview-coach";
 
-const UPLOAD_DIR = path.join(process.cwd(), ".interview-audio");
+const UPLOAD_DIR = process.env.VERCEL
+  ? path.join("/tmp", "resumesnap-interview-audio")
+  : path.join(process.cwd(), ".interview-audio");
 
 export async function POST(request: Request) {
   let tempPath: string | null = null;
