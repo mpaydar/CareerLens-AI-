@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "PYTHON_PATH=./skills-service/.venv/bin/python3 next dev --webpack",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "PYTHON_PATH=./skills-service/.venv/bin/python3 next start",
+    "up": "npm run build && npm run start",
+    "lint": "eslint",
+    "skills:setup": "python3 -m venv skills-service/.venv && skills-service/.venv/bin/pip install -r skills-service/requirements.txt && skills-service/.venv/bin/python -m spacy download en_core_web_sm"
   },
   "dependencies": {
     "next": "16.2.6",

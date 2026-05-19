@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local highlight bridge (extension → dev server)
+.highlight-state.json
+.highlight-state.json.tmp
+
+# uploaded resumes (local dev)
+/.resume-upload/
+.gap-analysis.json
+skills-service/.venv/
+/.interview-audio/

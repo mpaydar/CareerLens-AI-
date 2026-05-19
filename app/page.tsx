@@ -1,64 +1,480 @@
-import Image from "next/image";
+"use client";
+
+import { InterviewPrepCoach } from "@/components/interview-prep-coach";
+import { SkillGapDashboard } from "@/components/skill-gap-dashboard";
+import type { StoredGapAnalysis } from "@/lib/gap-types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type HighlightResponse = {
+  text: string;
+  sourceUrl: string;
+  jobId: string;
+  updatedAt: string;
+};
+
+type ResumeMeta = {
+  originalFileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  storedFileName: string;
+};
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function Home() {
+  const [highlight, setHighlight] = useState<HighlightResponse>({
+    text: "",
+    sourceUrl: "",
+    jobId: "",
+    updatedAt: "",
+  });
+  const [resumeMeta, setResumeMeta] = useState<ResumeMeta | null>(null);
+  const [resumeLoadError, setResumeLoadError] = useState<string | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [gapAnalysis, setGapAnalysis] = useState<StoredGapAnalysis | null>(null);
+  const [gapAnalyzing, setGapAnalyzing] = useState(false);
+  const [gapError, setGapError] = useState<string | null>(null);
+  const lastPublishedOnPage = useRef("");
+  const lastAnalyzedKey = useRef("");
+  const analyzeDebounceRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    let isMounted = true;
+    let selectionDebounce: number | undefined;
+
+    const pullLatestHighlight = async () => {
+      try {
+        const response = await fetch("/api/highlight", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error("failed to fetch highlight");
+        }
+
+        const data = (await response.json()) as HighlightResponse;
+
+        if (isMounted) {
+          setHighlight(data);
+          setIsOnline(true);
+          if (!data.text.trim()) {
+            setGapAnalysis(null);
+            lastAnalyzedKey.current = "";
+          }
+        }
+      } catch {
+        if (isMounted) {
+          setIsOnline(false);
+        }
+      }
+    };
+
+    /** Works in Cursor/VS Code preview (no extension). Cross-tab capture still needs Chrome + extension. */
+    const publishSelectionFromThisPage = async () => {
+      const text = window.getSelection()?.toString().trim() ?? "";
+      if (!text) {
+        lastPublishedOnPage.current = "";
+        return;
+      }
+      if (text === lastPublishedOnPage.current) {
+        return;
+      }
+      lastPublishedOnPage.current = text;
+
+      try {
+        const response = await fetch("/api/highlight", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, sourceUrl: window.location.href }),
+        });
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as HighlightResponse;
+        if (isMounted) {
+          setHighlight(data);
+          setIsOnline(true);
+        }
+      } catch {
+        if (isMounted) {
+          setIsOnline(false);
+        }
+      }
+    };
+
+    const schedulePublishFromPage = () => {
+      window.clearTimeout(selectionDebounce);
+      selectionDebounce = window.setTimeout(() => {
+        void publishSelectionFromThisPage();
+      }, 150);
+    };
+
+    pullLatestHighlight();
+    const intervalId = window.setInterval(pullLatestHighlight, 500);
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Shift" || event.key.startsWith("Arrow")) {
+        schedulePublishFromPage();
+      }
+    };
+
+    const onSelectionChange = () => {
+      schedulePublishFromPage();
+    };
+
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("mouseup", schedulePublishFromPage);
+    document.addEventListener("keyup", onKeyUp);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+      window.clearTimeout(selectionDebounce);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mouseup", schedulePublishFromPage);
+      document.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/resume", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("failed");
+        }
+        const data = (await response.json()) as { meta: ResumeMeta | null };
+        if (!cancelled) {
+          setResumeMeta(data.meta);
+          setResumeLoadError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setResumeLoadError("Could not load resume info.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/gap", { cache: "no-store" });
+        if (!response.ok || cancelled) {
+          return;
+        }
+        const data = (await response.json()) as {
+          analysis: StoredGapAnalysis | null;
+        };
+        if (!cancelled) {
+          setGapAnalysis(data.analysis);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const runGapAnalysis = useCallback(async () => {
+    setGapError(null);
+    setGapAnalyzing(true);
+    try {
+      const response = await fetch("/api/gap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobDescription: highlight.text }),
+      });
+      const data = (await response.json()) as {
+        analysis?: StoredGapAnalysis;
+        error?: string;
+      };
+      if (!response.ok) {
+        setGapError(data.error ?? "Analysis failed.");
+        return;
+      }
+      if (data.analysis) {
+        setGapAnalysis(data.analysis);
+        lastAnalyzedKey.current = `${highlight.jobId}:${highlight.updatedAt}:${highlight.text.length}`;
+      }
+    } catch {
+      setGapError(
+        "Could not run analysis. Install Python deps: npm run skills:setup",
+      );
+    } finally {
+      setGapAnalyzing(false);
+    }
+  }, [highlight.text, highlight.jobId, highlight.updatedAt]);
+
+  const gapReady = useMemo(
+    () => Boolean(resumeMeta) && highlight.text.trim().length >= 20,
+    [resumeMeta, highlight.text],
+  );
+
+  useEffect(() => {
+    if (!gapReady) {
+      return;
+    }
+
+    const analysisKey = `${highlight.jobId}:${highlight.updatedAt}:${highlight.text.length}`;
+    if (analysisKey === lastAnalyzedKey.current) {
+      return;
+    }
+
+    window.clearTimeout(analyzeDebounceRef.current);
+    analyzeDebounceRef.current = window.setTimeout(() => {
+      void runGapAnalysis();
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(analyzeDebounceRef.current);
+    };
+  }, [gapReady, highlight.text, highlight.jobId, highlight.updatedAt, runGapAnalysis]);
+
+  const sendResumeFile = async (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+    setUploadError(null);
+    setUploadBusy(true);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const response = await fetch("/api/resume", { method: "POST", body });
+      const data = (await response.json()) as {
+        meta?: ResumeMeta;
+        error?: string;
+      };
+      if (!response.ok) {
+        setUploadError(data.error ?? "Upload failed.");
+        return;
+      }
+      if (data.meta) {
+        setResumeMeta(data.meta);
+        setGapAnalysis(null);
+        lastAnalyzedKey.current = "";
+      }
+    } catch {
+      setUploadError("Upload failed.");
+    } finally {
+      setUploadBusy(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const clearHighlight = async () => {
+    try {
+      const response = await fetch("/api/highlight", { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error();
+      }
+      const data = (await response.json()) as HighlightResponse;
+      setHighlight(data);
+      setGapAnalysis(null);
+      setGapError(null);
+      lastPublishedOnPage.current = "";
+      lastAnalyzedKey.current = "";
+      window.dispatchEvent(new CustomEvent("resumesnap-highlight-cleared"));
+    } catch {
+      setGapError("Could not clear highlight.");
+    }
+  };
+
+  const removeResume = async () => {
+    setUploadError(null);
+    setUploadBusy(true);
+    try {
+      const response = await fetch("/api/resume", { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error();
+      }
+      setResumeMeta(null);
+      setGapAnalysis(null);
+      lastAnalyzedKey.current = "";
+    } catch {
+      setUploadError("Could not remove resume.");
+    } finally {
+      setUploadBusy(false);
+    }
+  };
+
+  const statusLabel = useMemo(() => {
+    if (!isOnline) {
+      return "Disconnected from local API";
+    }
+    if (!highlight.text) {
+      return "Waiting for highlighted text...";
+    }
+    return "Live updates active";
+  }, [highlight.text, isOnline]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <main className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-6 py-10">
+        <h1 className="text-3xl font-semibold">ResumeSnap</h1>
+        <p className="text-sm text-zinc-400">
+          Upload your resume, highlight a job description, and see which skills
+          match and which gaps to close—extracted with SpaCy.
+        </p>
+
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="mb-3 text-sm uppercase tracking-wide text-zinc-400">
+            Your resume
+          </h2>
+          <p className="mb-4 text-sm text-zinc-500">
+            PDF or Word (.doc, .docx), up to 10 MB. Files stay on this computer
+            only.
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          <input
+            ref={fileInputRef}
+            id="resume-file"
+            type="file"
+            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            className="sr-only"
+            disabled={uploadBusy}
+            onChange={(e) => void sendResumeFile(e.target.files?.[0])}
+          />
+          <div
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+            onClick={() => fileInputRef.current?.click()}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragActive(false);
+              void sendResumeFile(e.dataTransfer.files?.[0]);
+            }}
+            className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-10 text-center transition-colors ${
+              dragActive
+                ? "border-indigo-400 bg-zinc-800/80"
+                : "border-zinc-600 bg-zinc-950/50 hover:border-zinc-500"
+            } ${uploadBusy ? "pointer-events-none opacity-60" : ""}`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <span className="text-sm font-medium text-zinc-200">
+              Drop a file here or click to browse
+            </span>
+            <span className="mt-2 text-xs text-zinc-500">
+              {uploadBusy ? "Working…" : null}
+            </span>
+          </div>
+          {resumeLoadError ? (
+            <p className="mt-3 text-xs text-amber-400">{resumeLoadError}</p>
+          ) : null}
+          {uploadError ? (
+            <p className="mt-3 text-xs text-red-400">{uploadError}</p>
+          ) : null}
+          {resumeMeta ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-zinc-200">
+                  {resumeMeta.originalFileName}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  {formatFileSize(resumeMeta.sizeBytes)} ·{" "}
+                  {new Date(resumeMeta.uploadedAt).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void removeResume();
+                }}
+                disabled={uploadBusy}
+                className="shrink-0 rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+        </section>
+
+        <SkillGapDashboard
+          analysis={gapAnalysis}
+          analyzing={gapAnalyzing}
+          error={gapError}
+          ready={gapReady}
+          onAnalyze={() => void runGapAnalysis()}
+        />
+
+        <InterviewPrepCoach gapSkills={gapAnalysis?.missing ?? []} />
+
+        <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-indigo-300">
+          {statusLabel}
         </div>
+
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm uppercase tracking-wide text-zinc-400">
+              Latest Highlight
+            </h2>
+            <button
+              type="button"
+              onClick={() => void clearHighlight()}
+              disabled={!highlight.text}
+              className="rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Clear highlight
+            </button>
+          </div>
+          <pre className="max-h-[420px] min-h-[160px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-950 p-4 text-sm leading-relaxed text-zinc-100">
+            {highlight.text || "No text captured yet."}
+          </pre>
+
+          <p className="mt-3 text-xs text-zinc-600">
+            Highlights on the same job append below. A new LinkedIn job replaces
+            the box. Only Clear highlight empties this section.
+          </p>
+
+          <div className="mt-4 text-xs text-zinc-500">
+            {highlight.updatedAt
+              ? `Updated: ${new Date(highlight.updatedAt).toLocaleTimeString()}`
+              : "Updated: --"}
+          </div>
+          {highlight.jobId ? (
+            <div className="mt-1 text-xs text-zinc-500">
+              Job ID: {highlight.jobId}
+            </div>
+          ) : null}
+          <div className="mt-1 text-xs text-zinc-500 break-all">
+            {highlight.sourceUrl
+              ? `Source: ${highlight.sourceUrl}`
+              : "Source: --"}
+          </div>
+        </section>
       </main>
     </div>
   );
