@@ -4,14 +4,25 @@ Next.js app with the ResumeSnap browser extension for job-description highlighti
 
 ## Getting Started (local)
 
+From the repo root, work inside this folder (`frontend/` is the Vercel root):
+
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
 
+For SpaCy gap analysis and Whisper locally, run the Python service in `../llm_layer` and set `LLM_LAYER_URL=http://localhost:8000` in `.env.local`. See [../llm_layer/README.md](../llm_layer/README.md).
+
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Load the extension from the parent `extension` folder via `chrome://extensions` (Developer mode → Load unpacked).
+Load the extension from `frontend/chrome-extension/` via `chrome://extensions` (Developer mode → Load unpacked).
+
+## Vercel project settings
+
+In the Vercel dashboard, set **Root Directory** to `frontend` (not the repo root).
+
+Add `LLM_LAYER_URL` and `LLM_LAYER_SECRET` pointing at your Railway deployment for full SpaCy/Whisper features in production.
 
 ## Vercel + extension setup
 

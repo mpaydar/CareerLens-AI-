@@ -76,6 +76,11 @@ function extractBalancedJson(text: string): string | null {
   return text.slice(start);
 }
 
+/** Remove trailing commas before `}` or `]` (common in model JSON). */
+function stripTrailingCommas(input: string): string {
+  return input.replace(/,(\s*[}\]])/g, "$1");
+}
+
 function buildParseAttempts(input: string): string[] {
   const attempts: string[] = [];
   const push = (s: string) => {
@@ -84,7 +89,9 @@ function buildParseAttempts(input: string): string[] {
   };
 
   push(input);
+  push(stripTrailingCommas(input));
   push(repairUnescapedQuotes(input));
+  push(stripTrailingCommas(repairUnescapedQuotes(input)));
   push(repairNewlinesInStrings(input));
   push(repairUnescapedQuotes(repairNewlinesInStrings(input)));
   push(closeTruncatedJson(input));

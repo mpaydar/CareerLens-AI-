@@ -41,7 +41,11 @@ export async function POST(request: Request) {
     const text = await transcribeAudioFile(tempPath);
     return NextResponse.json({ text });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "transcription failed";
+    let message = e instanceof Error ? e.message : "transcription failed";
+    if (/ffmpeg/i.test(message) && /no such file/i.test(message)) {
+      message =
+        "ffmpeg is not installed. Run: brew install ffmpeg — then restart the LLM layer (uvicorn).";
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
     if (tempPath) {

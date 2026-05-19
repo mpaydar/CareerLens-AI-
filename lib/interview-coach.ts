@@ -1,6 +1,12 @@
+import { readFile } from "fs/promises";
 import { spawn } from "child_process";
 import path from "path";
 import type { InterviewPlanResponse } from "@/lib/interview-types";
+import {
+  getLlmLayerUrl,
+  llmLayerInterviewPlan,
+  llmLayerTranscribe,
+} from "@/lib/llm-layer-client";
 import { getPythonCommand, SKILLS_SERVICE_DIR } from "@/lib/python-env";
 
 function runPythonScript(
@@ -29,7 +35,7 @@ function runPythonScript(
     child.on("error", (err) => {
       reject(
         new Error(
-          `Failed to start Python (${pythonCmd}). Run: npm run skills:setup — ${err.message}`,
+          `Failed to start Python (${pythonCmd}). Run: npm run llm:setup — ${err.message}`,
         ),
       );
     });
@@ -64,14 +70,46 @@ function runPythonScript(
 export async function generateInterviewPlan(
   gapSkills: string[],
 ): Promise<InterviewPlanResponse> {
+  if (getLlmLayerUrl()) {
+    const result = await llmLayerInterviewPlan(gapSkills);
+    return result as InterviewPlanResponse;
+  }
+
   const result = await runPythonScript("interview_prep.py", { gapSkills });
   return result as InterviewPlanResponse;
+}
+
+export async function transcribeAudioBuffer(
+  buffer: Buffer,
+  filename: string,
+): Promise<string> {
+  if (getLlmLayerUrl()) {
+    return llmLayerTranscribe(
+      buffer,
+      filename,
+      process.env.WHISPER_MODEL || "base",
+    );
+  }
+
+  throw new Error(
+    "Whisper transcription requires LLM_LAYER_URL or local Python (not available on Vercel alone)",
+  );
 }
 
 export async function transcribeAudioFile(
   audioPath: string,
   model = "base",
 ): Promise<string> {
+  if (getLlmLayerUrl()) {
+    const buffer = await readFile(audioPath);
+    const filename = path.basename(audioPath);
+    return llmLayerTranscribe(
+      buffer,
+      filename,
+      process.env.WHISPER_MODEL || model,
+    );
+  }
+
   const result = await runPythonScript("transcribe_audio.py", {
     audioPath,
     model: process.env.WHISPER_MODEL || model,

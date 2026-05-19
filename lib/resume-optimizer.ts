@@ -1,6 +1,10 @@
 import { spawn } from "child_process";
 import path from "path";
 import { callGemini } from "@/lib/gemini-client";
+import {
+  getLlmLayerUrl,
+  llmLayerOptimizeContext,
+} from "@/lib/llm-layer-client";
 import { pickOptimizeContextGemini } from "@/lib/optimize-context-gemini";
 import { getPythonCommand, SKILLS_SERVICE_DIR } from "@/lib/python-env";
 import { readResumeText } from "@/lib/resume-text";
@@ -46,7 +50,7 @@ function runPythonScript(
     child.on("error", (err) => {
       reject(
         new Error(
-          `Failed to start Python (${pythonCmd}). Run: npm run skills:setup — ${err.message}`,
+          `Failed to start Python (${pythonCmd}). Run: npm run llm:setup — ${err.message}`,
         ),
       );
     });
@@ -115,16 +119,10 @@ export async function pickClusterOptimizeContext(
   };
 }
 
-async function pickOptimizeContextPython(
-  resumePath: string,
-  jobDescription: string,
+function mapOptimizeContextResult(
+  result: Record<string, unknown>,
   skill: string,
-): Promise<OptimizeContext> {
-  const result = await runPythonScript("optimize_context.py", {
-    resumePath,
-    jobDescription,
-    skill,
-  });
+): OptimizeContext {
 
   const relatedRaw = result.relatedBullets;
   const relatedBullets = Array.isArray(relatedRaw)
@@ -147,11 +145,43 @@ async function pickOptimizeContextPython(
   };
 }
 
+async function pickOptimizeContextPython(
+  resumePath: string,
+  jobDescription: string,
+  skill: string,
+): Promise<OptimizeContext> {
+  const resumeText = await readResumeText(resumePath);
+  const result = await runPythonScript("optimize_context.py", {
+    resumeText,
+    jobDescription,
+    skill,
+  });
+  return mapOptimizeContextResult(result, skill);
+}
+
+async function pickOptimizeContextLlmLayer(
+  resumePath: string,
+  jobDescription: string,
+  skill: string,
+): Promise<OptimizeContext> {
+  const resumeText = await readResumeText(resumePath);
+  const result = await llmLayerOptimizeContext(
+    resumeText,
+    jobDescription,
+    skill,
+  );
+  return mapOptimizeContextResult(result, skill);
+}
+
 export async function pickOptimizeContext(
   resumePath: string,
   jobDescription: string,
   skill: string,
 ): Promise<OptimizeContext> {
+  if (getLlmLayerUrl()) {
+    return pickOptimizeContextLlmLayer(resumePath, jobDescription, skill);
+  }
+
   if (process.env.VERCEL) {
     const resumeText = await readResumeText(resumePath);
     return pickOptimizeContextGemini(resumeText, jobDescription, skill);

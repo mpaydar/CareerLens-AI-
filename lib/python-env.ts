@@ -1,12 +1,17 @@
 import path from "path";
 
-export const SKILLS_SERVICE_DIR = path.join(process.cwd(), "skills-service");
+/** Local Python modules (monorepo sibling `llm_layer/skills_service`). */
+export const SKILLS_SERVICE_DIR = path.join(
+  process.cwd(),
+  "..",
+  "llm_layer",
+  "skills_service",
+);
 
 /**
- * Absolute path to the Python executable for skills-service scripts.
- * Set PYTHON_PATH in npm scripts (see package.json "dev") — do not reference
- * .venv paths here (Turbopack follows those symlinks and breaks the bundle).
- * Relative PYTHON_PATH is resolved from the project root, not skills-service/.
+ * Absolute path to the Python executable for local script spawning.
+ * Set PYTHON_PATH in npm scripts — do not reference .venv paths in imports
+ * (Turbopack follows those symlinks and breaks the bundle).
  */
 export function getPythonCommand(): string {
   const fromEnv = process.env.PYTHON_PATH?.trim();

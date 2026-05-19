@@ -4,6 +4,7 @@ import { AccountProvider, useAccount } from "@/components/account-provider";
 import { InterviewPrepCoach } from "@/components/interview-prep-coach";
 import { OnboardingWelcome } from "@/components/onboarding-welcome";
 import { SkillGapDashboard } from "@/components/skill-gap-dashboard";
+import { ApplicationsInsight } from "@/components/applications-insight";
 import { UsageBanner } from "@/components/usage-banner";
 import type { ResumeMeta } from "@/lib/account-types";
 import type { StoredGapAnalysis } from "@/lib/gap-types";
@@ -195,7 +196,7 @@ function HomeApp() {
       }
     } catch {
       setGapError(
-        "Could not run analysis. Install Python deps: npm run skills:setup",
+        "Could not run analysis. Ensure the LLM layer is running (LLM_LAYER_URL in frontend/.env.local) or run: npm run llm:setup",
       );
     } finally {
       setGapAnalyzing(false);
@@ -272,6 +273,7 @@ function HomeApp() {
       setGapError(null);
       lastPublishedOnPage.current = "";
       lastAnalyzedKey.current = "";
+      window.getSelection()?.removeAllRanges();
       window.dispatchEvent(new CustomEvent("resumesnap-highlight-cleared"));
     } catch {
       setGapError("Could not clear highlight.");
@@ -335,6 +337,46 @@ function HomeApp() {
         </div>
 
         <UsageBanner />
+
+        <ApplicationsInsight currentJobId={highlight.jobId || undefined} />
+
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm uppercase tracking-wide text-zinc-400">
+              Latest Highlight
+            </h2>
+            <button
+              type="button"
+              onClick={() => void clearHighlight()}
+              disabled={!highlight.text}
+              className="rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Clear highlight
+            </button>
+          </div>
+          <pre className="max-h-[420px] min-h-[160px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-950 p-4 text-sm leading-relaxed text-zinc-100">
+            {highlight.text || "No text captured yet."}
+          </pre>
+          <p className="mt-3 text-xs text-zinc-600">
+            Select job description text on LinkedIn (extension) or on this page.
+            Same job appends with a separator; a new job replaces the box.
+          </p>
+          <div className="mt-4 text-xs text-zinc-500">
+            {highlight.updatedAt
+              ? `Updated: ${new Date(highlight.updatedAt).toLocaleTimeString()}`
+              : "Updated: --"}
+          </div>
+          {highlight.jobId ? (
+            <div className="mt-1 text-xs text-zinc-500">
+              Job ID: {highlight.jobId}
+            </div>
+          ) : null}
+          <div className="mt-1 text-xs text-zinc-500 break-all">
+            {highlight.sourceUrl
+              ? `Source: ${highlight.sourceUrl}`
+              : "Source: --"}
+          </div>
+        </section>
 
         <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
           <h2 className="mb-3 text-sm uppercase tracking-wide text-zinc-400">
@@ -432,46 +474,6 @@ function HomeApp() {
         <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-indigo-300">
           {statusLabel}
         </div>
-
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm uppercase tracking-wide text-zinc-400">
-              Latest Highlight
-            </h2>
-            <button
-              type="button"
-              onClick={() => void clearHighlight()}
-              disabled={!highlight.text}
-              className="rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Clear highlight
-            </button>
-          </div>
-          <pre className="max-h-[420px] min-h-[160px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-950 p-4 text-sm leading-relaxed text-zinc-100">
-            {highlight.text || "No text captured yet."}
-          </pre>
-
-          <p className="mt-3 text-xs text-zinc-600">
-            Highlights on the same job append below. A new LinkedIn job replaces
-            the box. Only Clear highlight empties this section.
-          </p>
-
-          <div className="mt-4 text-xs text-zinc-500">
-            {highlight.updatedAt
-              ? `Updated: ${new Date(highlight.updatedAt).toLocaleTimeString()}`
-              : "Updated: --"}
-          </div>
-          {highlight.jobId ? (
-            <div className="mt-1 text-xs text-zinc-500">
-              Job ID: {highlight.jobId}
-            </div>
-          ) : null}
-          <div className="mt-1 text-xs text-zinc-500 break-all">
-            {highlight.sourceUrl
-              ? `Source: ${highlight.sourceUrl}`
-              : "Source: --"}
-          </div>
-        </section>
       </main>
     </div>
   );

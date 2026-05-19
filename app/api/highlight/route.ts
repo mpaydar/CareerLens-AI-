@@ -38,12 +38,23 @@ export async function POST(request: Request) {
       );
     }
 
-    const scopeId = await getHighlightScopeId();
-    const state = await appendHighlightChunk(text, sourceUrl, scopeId);
+    // Extension POSTs from LinkedIn never send session cookies → always global.
+    const globalState = await appendHighlightChunk(
+      text,
+      sourceUrl,
+      GLOBAL_HIGHLIGHT_SCOPE,
+    );
 
-    if (scopeId !== GLOBAL_HIGHLIGHT_SCOPE) {
-      await appendHighlightChunk(text, sourceUrl, GLOBAL_HIGHLIGHT_SCOPE);
+    const scopeId = await getHighlightScopeId();
+    if (scopeId === GLOBAL_HIGHLIGHT_SCOPE) {
+      return NextResponse.json(globalState, { headers: CORS_HEADERS });
     }
+
+    const userState = await appendHighlightChunk(text, sourceUrl, scopeId);
+    const state =
+      Date.parse(userState.updatedAt) >= Date.parse(globalState.updatedAt)
+        ? userState
+        : globalState;
 
     return NextResponse.json(state, { headers: CORS_HEADERS });
   } catch {
@@ -56,7 +67,13 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   const scopeId = await getHighlightScopeId();
-  const state = await clearHighlightState(scopeId);
+  // Extension POSTs without session cookies → global scope. Clear both so GET
+  // does not fall back to stale global text after a logged-in user clears.
+  await clearHighlightState(GLOBAL_HIGHLIGHT_SCOPE);
+  if (scopeId !== GLOBAL_HIGHLIGHT_SCOPE) {
+    await clearHighlightState(scopeId);
+  }
+  const state = await getHighlightForSession();
   const user = await getAuthenticatedUser();
   if (user) {
     await clearGapAnalysis(user.id);
