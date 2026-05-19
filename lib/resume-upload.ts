@@ -10,7 +10,7 @@ export type ResumeMeta = {
   storedFileName: string;
 };
 
-const UPLOAD_DIR = path.join(process.cwd(), ".resume-upload");
+const UPLOAD_ROOT = path.join(process.cwd(), ".resume-upload");
 const META_FILE = "meta.json";
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -24,8 +24,12 @@ const MIME_FOR_EXT: Record<string, string> = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
-function getMetaPath(): string {
-  return path.join(UPLOAD_DIR, META_FILE);
+function getUserUploadDir(userId: string): string {
+  return path.join(UPLOAD_ROOT, userId);
+}
+
+function getMetaPath(userId: string): string {
+  return path.join(getUserUploadDir(userId), META_FILE);
 }
 
 function safeExtension(fileName: string): string | null {
@@ -33,9 +37,9 @@ function safeExtension(fileName: string): string | null {
   return ALLOWED_EXT.has(ext) ? ext : null;
 }
 
-export async function getResumeMeta(): Promise<ResumeMeta | null> {
+export async function getResumeMeta(userId: string): Promise<ResumeMeta | null> {
   try {
-    const raw = await readFile(getMetaPath(), "utf8");
+    const raw = await readFile(getMetaPath(userId), "utf8");
     const parsed = JSON.parse(raw) as Partial<ResumeMeta>;
     if (
       typeof parsed.originalFileName !== "string" ||
@@ -52,13 +56,14 @@ export async function getResumeMeta(): Promise<ResumeMeta | null> {
   }
 }
 
-async function removeStoredFiles(): Promise<void> {
+async function removeStoredFiles(userId: string): Promise<void> {
+  const dir = getUserUploadDir(userId);
   try {
-    const names = await readdir(UPLOAD_DIR);
+    const names = await readdir(dir);
     for (const name of names) {
       if (name === META_FILE) continue;
       if (name.startsWith("resume-")) {
-        await unlink(path.join(UPLOAD_DIR, name));
+        await unlink(path.join(dir, name));
       }
     }
   } catch {
@@ -66,7 +71,10 @@ async function removeStoredFiles(): Promise<void> {
   }
 }
 
-export async function saveResumeFromUpload(file: File): Promise<ResumeMeta> {
+export async function saveResumeFromUpload(
+  userId: string,
+  file: File,
+): Promise<ResumeMeta> {
   const ext = safeExtension(file.name);
   if (!ext) {
     throw new Error("invalid file type; use PDF, DOC, or DOCX");
@@ -87,12 +95,13 @@ export async function saveResumeFromUpload(file: File): Promise<ResumeMeta> {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  const uploadDir = getUserUploadDir(userId);
 
-  await mkdir(UPLOAD_DIR, { recursive: true });
-  await removeStoredFiles();
+  await mkdir(uploadDir, { recursive: true });
+  await removeStoredFiles(userId);
 
   const storedFileName = `resume-${Date.now()}${ext}`;
-  const storedPath = path.join(UPLOAD_DIR, storedFileName);
+  const storedPath = path.join(uploadDir, storedFileName);
   await writeFile(storedPath, buffer);
 
   const meta: ResumeMeta = {
@@ -103,25 +112,27 @@ export async function saveResumeFromUpload(file: File): Promise<ResumeMeta> {
     storedFileName,
   };
 
-  await writeFile(getMetaPath(), JSON.stringify(meta, null, 0), "utf8");
-  await clearGapAnalysis();
+  await writeFile(getMetaPath(userId), JSON.stringify(meta, null, 0), "utf8");
+  await clearGapAnalysis(userId);
   return meta;
 }
 
-export function getResumeFilePath(meta: ResumeMeta): string {
-  return path.join(UPLOAD_DIR, meta.storedFileName);
+export function getResumeFilePath(userId: string, meta: ResumeMeta): string {
+  return path.join(getUserUploadDir(userId), meta.storedFileName);
 }
 
-export async function deleteResume(): Promise<void> {
-  const meta = await getResumeMeta();
+export async function deleteResume(userId: string): Promise<void> {
+  const meta = await getResumeMeta(userId);
   try {
     if (meta) {
-      await unlink(path.join(UPLOAD_DIR, meta.storedFileName)).catch(() => {});
+      await unlink(path.join(getUserUploadDir(userId), meta.storedFileName)).catch(
+        () => {},
+      );
     }
-    await unlink(getMetaPath()).catch(() => {});
+    await unlink(getMetaPath(userId)).catch(() => {});
   } catch {
     // ignore
   }
-  await removeStoredFiles();
-  await clearGapAnalysis();
+  await removeStoredFiles(userId);
+  await clearGapAnalysis(userId);
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth";
 import {
   deleteResume,
   getResumeMeta,
@@ -12,12 +13,30 @@ const CORS_HEADERS = {
 };
 
 export async function GET() {
-  const meta = await getResumeMeta();
-  return NextResponse.json({ meta }, { headers: CORS_HEADERS });
+  try {
+    const user = await requireAuthenticatedUser();
+    const meta = await getResumeMeta(user.id);
+    return NextResponse.json({ meta }, { headers: CORS_HEADERS });
+  } catch (e) {
+    if (e instanceof Error && e.message === "UNAUTHORIZED") {
+      return NextResponse.json(
+        { meta: null, error: "Sign in required" },
+        { status: 401, headers: CORS_HEADERS },
+      );
+    }
+    if (e instanceof Error && e.message === "ONBOARDING_REQUIRED") {
+      return NextResponse.json(
+        { meta: null, error: "Complete onboarding first" },
+        { status: 403, headers: CORS_HEADERS },
+      );
+    }
+    throw e;
+  }
 }
 
 export async function POST(request: Request) {
   try {
+    const user = await requireAuthenticatedUser();
     const formData = await request.formData();
     const file = formData.get("file");
 
@@ -28,9 +47,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const meta = await saveResumeFromUpload(file);
+    const meta = await saveResumeFromUpload(user.id, file);
     return NextResponse.json({ meta }, { headers: CORS_HEADERS });
   } catch (e) {
+    if (e instanceof Error && e.message === "UNAUTHORIZED") {
+      return NextResponse.json(
+        { error: "Sign in required" },
+        { status: 401, headers: CORS_HEADERS },
+      );
+    }
+    if (e instanceof Error && e.message === "ONBOARDING_REQUIRED") {
+      return NextResponse.json(
+        { error: "Complete onboarding first" },
+        { status: 403, headers: CORS_HEADERS },
+      );
+    }
     const message = e instanceof Error ? e.message : "upload failed";
     return NextResponse.json(
       { error: message },
@@ -40,8 +71,22 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  await deleteResume();
-  return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
+  try {
+    const user = await requireAuthenticatedUser();
+    await deleteResume(user.id);
+    return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
+  } catch (e) {
+    if (e instanceof Error && e.message === "UNAUTHORIZED") {
+      return NextResponse.json(
+        { error: "Sign in required" },
+        { status: 401, headers: CORS_HEADERS },
+      );
+    }
+    return NextResponse.json(
+      { error: "Could not remove resume" },
+      { status: 403, headers: CORS_HEADERS },
+    );
+  }
 }
 
 export async function OPTIONS() {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getHighlightState } from "@/lib/highlight-store";
+import { requireAuthenticatedUser } from "@/lib/auth";
+import { getHighlightForSession } from "@/lib/highlight-scope";
 import {
   clearGapAnalysis,
   getStoredGapAnalysis,
@@ -12,52 +13,64 @@ import {
 } from "@/lib/resume-upload";
 
 export async function GET() {
-  const analysis = await getStoredGapAnalysis();
-  const resumeMeta = await getResumeMeta();
-  const highlight = await getHighlightState();
+  try {
+    const user = await requireAuthenticatedUser();
+    const analysis = await getStoredGapAnalysis(user.id);
+    const resumeMeta = await getResumeMeta(user.id);
+    const highlight = await getHighlightForSession();
 
-  return NextResponse.json({
-    analysis,
-    ready: Boolean(resumeMeta && highlight.text.trim().length >= 20),
-    resumeMeta,
-    highlightPreview: highlight.text.slice(0, 200),
-  });
+    return NextResponse.json({
+      analysis,
+      ready: Boolean(resumeMeta && highlight.text.trim().length >= 20),
+      resumeMeta,
+      highlightPreview: highlight.text.slice(0, 200),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+    }
+    return NextResponse.json(
+      { error: "Complete onboarding first" },
+      { status: 403 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
-  const resumeMeta = await getResumeMeta();
-  const highlight = await getHighlightState();
-
-  if (!resumeMeta) {
-    return NextResponse.json(
-      { error: "upload a resume first" },
-      { status: 400 },
-    );
-  }
-
-  let jobDescription = highlight.text.trim();
   try {
-    const body = (await request.json()) as { jobDescription?: string };
-    if (body.jobDescription?.trim()) {
-      jobDescription = body.jobDescription.trim();
+    const user = await requireAuthenticatedUser();
+    const resumeMeta = await getResumeMeta(user.id);
+    const highlight = await getHighlightForSession();
+
+    if (!resumeMeta) {
+      return NextResponse.json(
+        { error: "upload a resume first" },
+        { status: 400 },
+      );
     }
-  } catch {
-    // use stored highlight when body is empty
-  }
-  if (jobDescription.length < 20) {
-    return NextResponse.json(
-      { error: "highlight a job description (at least 20 characters)" },
-      { status: 400 },
-    );
-  }
 
-  try {
+    let jobDescription = highlight.text.trim();
+    try {
+      const body = (await request.json()) as { jobDescription?: string };
+      if (body.jobDescription?.trim()) {
+        jobDescription = body.jobDescription.trim();
+      }
+    } catch {
+      // use stored highlight when body is empty
+    }
+    if (jobDescription.length < 20) {
+      return NextResponse.json(
+        { error: "highlight a job description (at least 20 characters)" },
+        { status: 400 },
+      );
+    }
+
     const analysis = await runGapAnalysis(
-      getResumeFilePath(resumeMeta),
+      getResumeFilePath(user.id, resumeMeta),
       jobDescription,
     );
 
-    const stored = await saveGapAnalysis(analysis, {
+    const stored = await saveGapAnalysis(user.id, analysis, {
       jobDescriptionPreview: jobDescription.slice(0, 280),
       resumeFileName: resumeMeta.originalFileName,
     });
@@ -65,11 +78,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ analysis: stored });
   } catch (e) {
     const message = e instanceof Error ? e.message : "analysis failed";
+    if (message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+    }
+    if (message === "ONBOARDING_REQUIRED") {
+      return NextResponse.json(
+        { error: "Complete onboarding first" },
+        { status: 403 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function DELETE() {
-  await clearGapAnalysis();
-  return NextResponse.json({ ok: true });
+  try {
+    const user = await requireAuthenticatedUser();
+    await clearGapAnalysis(user.id);
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 }

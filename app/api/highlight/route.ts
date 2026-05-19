@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import {
   appendHighlightChunk,
   clearHighlightState,
-  getHighlightState,
+  GLOBAL_HIGHLIGHT_SCOPE,
 } from "@/lib/highlight-store";
+import { getHighlightForSession, getHighlightScopeId } from "@/lib/highlight-scope";
+import { getAuthenticatedUser } from "@/lib/auth";
 import { clearGapAnalysis } from "@/lib/gap-store";
 
 const CORS_HEADERS = {
@@ -13,7 +15,7 @@ const CORS_HEADERS = {
 };
 
 export async function GET() {
-  const state = await getHighlightState();
+  const state = await getHighlightForSession();
   return NextResponse.json(state, {
     headers: CORS_HEADERS,
   });
@@ -36,7 +38,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const state = await appendHighlightChunk(text, sourceUrl);
+    const scopeId = await getHighlightScopeId();
+    const state = await appendHighlightChunk(text, sourceUrl, scopeId);
+
+    if (scopeId !== GLOBAL_HIGHLIGHT_SCOPE) {
+      await appendHighlightChunk(text, sourceUrl, GLOBAL_HIGHLIGHT_SCOPE);
+    }
+
     return NextResponse.json(state, { headers: CORS_HEADERS });
   } catch {
     return NextResponse.json(
@@ -47,8 +55,12 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  const state = await clearHighlightState();
-  await clearGapAnalysis();
+  const scopeId = await getHighlightScopeId();
+  const state = await clearHighlightState(scopeId);
+  const user = await getAuthenticatedUser();
+  if (user) {
+    await clearGapAnalysis(user.id);
+  }
   return NextResponse.json(state, { headers: CORS_HEADERS });
 }
 

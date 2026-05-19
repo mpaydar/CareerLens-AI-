@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccount } from "@/components/account-provider";
 import type { OptimizeMode } from "@/lib/resume-optimizer";
 import { useCallback, useEffect, useState } from "react";
 
@@ -25,6 +26,7 @@ export function ResumeSkillOptimizer({
   neededFor,
   onClose,
 }: ResumeSkillOptimizerProps) {
+  const { handleRateLimitResponse, refreshAccount } = useAccount();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OptimizeResponse | null>(null);
@@ -44,7 +46,11 @@ export function ResumeSkillOptimizer({
       });
       const data = (await response.json()) as OptimizeResponse & {
         error?: string;
+        code?: string;
       };
+      if (handleRateLimitResponse(response, data)) {
+        return;
+      }
       if (!response.ok) {
         throw new Error(data.error ?? "Optimization failed");
       }
@@ -52,12 +58,13 @@ export function ResumeSkillOptimizer({
         throw new Error("No bullet was generated. Try again.");
       }
       setResult(data);
+      await refreshAccount();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Optimization failed");
     } finally {
       setLoading(false);
     }
-  }, [skill, mode, neededFor]);
+  }, [skill, mode, neededFor, handleRateLimitResponse, refreshAccount]);
 
   useEffect(() => {
     void runOptimize();

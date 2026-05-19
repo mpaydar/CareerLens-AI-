@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth";
 import { resolveProjectRequest } from "@/lib/project-request";
 import {
   generateBulletFromGithubProject,
@@ -7,6 +8,7 @@ import {
 
 export async function POST(request: Request) {
   try {
+    const user = await requireAuthenticatedUser();
     const body = (await request.json()) as {
       skill?: string;
       skills?: string[];
@@ -42,10 +44,15 @@ export async function POST(request: Request) {
           : [];
 
     const { resumePath, jobDescription, neededFor, clusterLabel, clusterKind } =
-      await resolveProjectRequest(skills, body.contextSummary ?? body.neededFor, {
-        clusterLabel: body.clusterLabel,
-        clusterKind: body.clusterKind,
-      });
+      await resolveProjectRequest(
+        user,
+        skills,
+        body.contextSummary ?? body.neededFor,
+        {
+          clusterLabel: body.clusterLabel,
+          clusterKind: body.clusterKind,
+        },
+      );
 
     const result = await generateBulletFromGithubProject(
       resumePath,
@@ -59,6 +66,15 @@ export async function POST(request: Request) {
   } catch (e) {
     const message =
       e instanceof Error ? e.message : "failed to generate resume bullet";
+    if (message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+    }
+    if (message === "ONBOARDING_REQUIRED") {
+      return NextResponse.json(
+        { error: "Complete onboarding first" },
+        { status: 403 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -1,7 +1,10 @@
 "use client";
 
+import { AccountProvider, useAccount } from "@/components/account-provider";
 import { InterviewPrepCoach } from "@/components/interview-prep-coach";
+import { OnboardingWelcome } from "@/components/onboarding-welcome";
 import { SkillGapDashboard } from "@/components/skill-gap-dashboard";
+import { UsageBanner } from "@/components/usage-banner";
 import type { StoredGapAnalysis } from "@/lib/gap-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,14 +15,6 @@ type HighlightResponse = {
   updatedAt: string;
 };
 
-type ResumeMeta = {
-  originalFileName: string;
-  mimeType: string;
-  sizeBytes: number;
-  uploadedAt: string;
-  storedFileName: string;
-};
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -27,14 +22,21 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function Home() {
+  return (
+    <AccountProvider>
+      <HomeApp />
+    </AccountProvider>
+  );
+}
+
+function HomeApp() {
+  const { user, loading, resume: resumeMeta, refreshAccount } = useAccount();
   const [highlight, setHighlight] = useState<HighlightResponse>({
     text: "",
     sourceUrl: "",
     jobId: "",
     updatedAt: "",
   });
-  const [resumeMeta, setResumeMeta] = useState<ResumeMeta | null>(null);
-  const [resumeLoadError, setResumeLoadError] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -146,30 +148,6 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch("/api/resume", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("failed");
-        }
-        const data = (await response.json()) as { meta: ResumeMeta | null };
-        if (!cancelled) {
-          setResumeMeta(data.meta);
-          setResumeLoadError(null);
-        }
-      } catch {
-        if (!cancelled) {
-          setResumeLoadError("Could not load resume info.");
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
 
     void (async () => {
       try {
@@ -267,7 +245,7 @@ export default function Home() {
         return;
       }
       if (data.meta) {
-        setResumeMeta(data.meta);
+        await refreshAccount();
         setGapAnalysis(null);
         lastAnalyzedKey.current = "";
       }
@@ -307,7 +285,7 @@ export default function Home() {
       if (!response.ok) {
         throw new Error();
       }
-      setResumeMeta(null);
+      await refreshAccount();
       setGapAnalysis(null);
       lastAnalyzedKey.current = "";
     } catch {
@@ -327,22 +305,43 @@ export default function Home() {
     return "Live updates active";
   }, [highlight.text, isOnline]);
 
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!user?.onboardingComplete) {
+    return <OnboardingWelcome />;
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-6 py-10">
-        <h1 className="text-3xl font-semibold">ResumeSnap</h1>
-        <p className="text-sm text-zinc-400">
-          Upload your resume, highlight a job description, and see which skills
-          match and which gaps to close—extracted with SpaCy.
-        </p>
+        <div>
+          <h1 className="text-3xl font-semibold">
+            ResumeSnap
+            <span className="ml-2 text-lg font-normal text-zinc-500">
+              · {user.firstName}
+            </span>
+          </h1>
+          <p className="mt-1 text-sm text-zinc-400">
+            Highlight a job description, analyze skill gaps, and tailor your
+            resume with AI.
+          </p>
+        </div>
+
+        <UsageBanner />
 
         <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
           <h2 className="mb-3 text-sm uppercase tracking-wide text-zinc-400">
             Your resume
           </h2>
           <p className="mb-4 text-sm text-zinc-500">
-            PDF or Word (.doc, .docx), up to 10 MB. Files stay on this computer
-            only.
+            PDF or Word (.doc, .docx), up to 10 MB. Replace anytime with an
+            updated version.
           </p>
           <input
             ref={fileInputRef}
@@ -390,9 +389,6 @@ export default function Home() {
               {uploadBusy ? "Working…" : null}
             </span>
           </div>
-          {resumeLoadError ? (
-            <p className="mt-3 text-xs text-amber-400">{resumeLoadError}</p>
-          ) : null}
           {uploadError ? (
             <p className="mt-3 text-xs text-red-400">{uploadError}</p>
           ) : null}

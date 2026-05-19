@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getHighlightState } from "@/lib/highlight-store";
+import { requireAuthenticatedUser } from "@/lib/auth";
+import { getHighlightForSession } from "@/lib/highlight-scope";
 import {
   optimizeResumeBullet,
   type OptimizeMode,
@@ -8,9 +9,9 @@ import {
   getResumeFilePath,
   getResumeMeta,
 } from "@/lib/resume-upload";
-
 export async function POST(request: Request) {
   try {
+    const user = await requireAuthenticatedUser();
     const body = (await request.json()) as {
       skill?: string;
       mode?: OptimizeMode;
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "skill is required" }, { status: 400 });
     }
 
-    const resumeMeta = await getResumeMeta();
+    const resumeMeta = await getResumeMeta(user.id);
     if (!resumeMeta) {
       return NextResponse.json(
         { error: "upload a resume first" },
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const highlight = await getHighlightState();
+    const highlight = await getHighlightForSession();
     const jobDescription = highlight.text.trim();
     if (jobDescription.length < 20) {
       return NextResponse.json(
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
     }
 
     const result = await optimizeResumeBullet(
-      getResumeFilePath(resumeMeta),
+      getResumeFilePath(user.id, resumeMeta),
       jobDescription,
       skill,
       { mode, neededFor },
@@ -54,6 +55,15 @@ export async function POST(request: Request) {
   } catch (e) {
     const message =
       e instanceof Error ? e.message : "failed to optimize resume bullet";
+    if (message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+    }
+    if (message === "ONBOARDING_REQUIRED") {
+      return NextResponse.json(
+        { error: "Complete onboarding first" },
+        { status: 403 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -1,9 +1,9 @@
-import { getHighlightState } from "@/lib/highlight-store";
+import { getHighlightForSession } from "@/lib/highlight-scope";
 import { getResumeFilePath, getResumeMeta } from "@/lib/resume-upload";
 import type { SkillClusterKind } from "@/lib/skill-clusters";
+import type { User } from "@/lib/user-store";
 
 export type ProjectRequestContext = {
-  /** Primary label (cluster name or single skill) */
   skill: string;
   skills: string[];
   clusterLabel?: string;
@@ -14,6 +14,7 @@ export type ProjectRequestContext = {
 };
 
 export async function resolveProjectRequest(
+  user: User,
   skillOrSkills: string | string[],
   neededFor?: string,
   options?: {
@@ -29,12 +30,12 @@ export async function resolveProjectRequest(
     throw new Error("at least one skill is required");
   }
 
-  const resumeMeta = await getResumeMeta();
+  const resumeMeta = await getResumeMeta(user.id);
   if (!resumeMeta) {
     throw new Error("upload a resume first");
   }
 
-  const highlight = await getHighlightState();
+  const highlight = await getHighlightForSession();
   const jobDescription = highlight.text.trim();
   if (jobDescription.length < 20) {
     throw new Error("highlight a job description first");
@@ -51,7 +52,7 @@ export async function resolveProjectRequest(
     clusterLabel,
     clusterKind: options?.clusterKind,
     neededFor: neededFor?.trim() || undefined,
-    resumePath: getResumeFilePath(resumeMeta),
+    resumePath: getResumeFilePath(user.id, resumeMeta),
     jobDescription,
   };
 }

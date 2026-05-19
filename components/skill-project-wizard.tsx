@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccount } from "@/components/account-provider";
 import { downloadProjectGuidePdf } from "@/lib/download-project-guide";
 import type { SkillCluster } from "@/lib/skill-clusters";
 import type { SkillProjectSuggestion } from "@/lib/skill-projects";
@@ -52,6 +53,7 @@ export function SkillProjectWizard({
   cluster,
   onClose,
 }: SkillProjectWizardProps) {
+  const { handleRateLimitResponse, refreshAccount } = useAccount();
   const clusterBody = useMemo(() => clusterApiBody(cluster), [cluster]);
   const headline =
     cluster.skills.length === 1 ? cluster.skills[0] : cluster.label;
@@ -104,7 +106,11 @@ export function SkillProjectWizard({
         const data = (await response.json()) as {
           instructionGuide?: string;
           error?: string;
+          code?: string;
         };
+        if (handleRateLimitResponse(response, data)) {
+          return;
+        }
         if (!response.ok) {
           throw new Error(data.error ?? "Failed to generate guide");
         }
@@ -124,7 +130,7 @@ export function SkillProjectWizard({
         setGuideStatus((prev) => ({ ...prev, [project.id]: "error" }));
       }
     },
-    [clusterBody],
+    [clusterBody, handleRateLimitResponse],
   );
 
   const fetchProjects = useCallback(async () => {
@@ -150,7 +156,12 @@ export function SkillProjectWizard({
       const data = (await response.json()) as {
         projects?: SkillProjectSuggestion[];
         error?: string;
+        code?: string;
       };
+      if (handleRateLimitResponse(response, data)) {
+        setStep("intro");
+        return;
+      }
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to load projects");
       }
@@ -169,12 +180,13 @@ export function SkillProjectWizard({
       await Promise.all(
         meta.map((project) => loadGuide(project, controller.signal)),
       );
+      await refreshAccount();
     } catch (e) {
       if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : "Failed to load projects");
       setStep("intro");
     }
-  }, [clusterBody, loadGuide]);
+  }, [clusterBody, loadGuide, handleRateLimitResponse, refreshAccount]);
 
   const retryGuide = useCallback(
     (project: SkillProjectSuggestion) => {
@@ -205,7 +217,11 @@ export function SkillProjectWizard({
       const data = (await response.json()) as {
         optimizedBullet?: string;
         error?: string;
+        code?: string;
       };
+      if (handleRateLimitResponse(response, data)) {
+        return;
+      }
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to generate bullet");
       }
@@ -214,12 +230,19 @@ export function SkillProjectWizard({
       }
       setBullet(data.optimizedBullet.trim());
       setStep("bullet");
+      await refreshAccount();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate bullet");
     } finally {
       setLoadingBullet(false);
     }
-  }, [clusterBody, githubUrl, selectedProject]);
+  }, [
+    clusterBody,
+    githubUrl,
+    selectedProject,
+    handleRateLimitResponse,
+    refreshAccount,
+  ]);
 
   const copyGuide = async (project: SkillProjectSuggestion) => {
     try {
