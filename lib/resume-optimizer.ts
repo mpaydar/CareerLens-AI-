@@ -1,7 +1,9 @@
 import { spawn } from "child_process";
 import path from "path";
 import { callGemini } from "@/lib/gemini-client";
+import { pickOptimizeContextGemini } from "@/lib/optimize-context-gemini";
 import { getPythonCommand, SKILLS_SERVICE_DIR } from "@/lib/python-env";
+import { readResumeText } from "@/lib/resume-text";
 
 export type OptimizeMode = "missing" | "reframe";
 
@@ -113,7 +115,7 @@ export async function pickClusterOptimizeContext(
   };
 }
 
-export async function pickOptimizeContext(
+async function pickOptimizeContextPython(
   resumePath: string,
   jobDescription: string,
   skill: string,
@@ -143,6 +145,28 @@ export async function pickOptimizeContext(
           : [],
     bulletMentionsSkill: Boolean(result.bulletMentionsSkill),
   };
+}
+
+export async function pickOptimizeContext(
+  resumePath: string,
+  jobDescription: string,
+  skill: string,
+): Promise<OptimizeContext> {
+  if (process.env.VERCEL) {
+    const resumeText = await readResumeText(resumePath);
+    return pickOptimizeContextGemini(resumeText, jobDescription, skill);
+  }
+
+  try {
+    return await pickOptimizeContextPython(resumePath, jobDescription, skill);
+  } catch (pythonError) {
+    try {
+      const resumeText = await readResumeText(resumePath);
+      return pickOptimizeContextGemini(resumeText, jobDescription, skill);
+    } catch {
+      throw pythonError;
+    }
+  }
 }
 
 function buildReframePrompt(ctx: OptimizeContext): string {

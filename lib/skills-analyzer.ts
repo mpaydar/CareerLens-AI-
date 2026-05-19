@@ -1,7 +1,9 @@
 import { spawn } from "child_process";
 import path from "path";
 import type { GapAnalysis } from "@/lib/gap-analysis-types";
+import { runGeminiGapAnalysis } from "@/lib/gap-analysis-gemini";
 import { getPythonCommand, SKILLS_SERVICE_DIR } from "@/lib/python-env";
+import { readResumeText } from "@/lib/resume-text";
 
 export type {
   ContextMismatchDetail,
@@ -12,7 +14,11 @@ export type {
 
 const ANALYZE_SCRIPT = path.join(SKILLS_SERVICE_DIR, "analyze.py");
 
-export async function runGapAnalysis(
+function useGeminiGapAnalysis(): boolean {
+  return Boolean(process.env.VERCEL);
+}
+
+async function runPythonGapAnalysis(
   resumePath: string,
   jobDescription: string,
 ): Promise<GapAnalysis> {
@@ -78,4 +84,25 @@ export async function runGapAnalysis(
     child.stdin.write(payload);
     child.stdin.end();
   });
+}
+
+export async function runGapAnalysis(
+  resumePath: string,
+  jobDescription: string,
+): Promise<GapAnalysis> {
+  if (useGeminiGapAnalysis()) {
+    const resumeText = await readResumeText(resumePath);
+    return runGeminiGapAnalysis(resumeText, jobDescription);
+  }
+
+  try {
+    return await runPythonGapAnalysis(resumePath, jobDescription);
+  } catch (pythonError) {
+    try {
+      const resumeText = await readResumeText(resumePath);
+      return runGeminiGapAnalysis(resumeText, jobDescription);
+    } catch {
+      throw pythonError;
+    }
+  }
 }
