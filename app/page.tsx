@@ -5,6 +5,7 @@ import { InterviewPrepCoach } from "@/components/interview-prep-coach";
 import { OnboardingWelcome } from "@/components/onboarding-welcome";
 import { SkillGapDashboard } from "@/components/skill-gap-dashboard";
 import { UsageBanner } from "@/components/usage-banner";
+import type { ResumeMeta } from "@/lib/account-types";
 import type { StoredGapAnalysis } from "@/lib/gap-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
